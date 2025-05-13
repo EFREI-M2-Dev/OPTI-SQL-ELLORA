@@ -47,20 +47,24 @@ On observe que l'indexation des colonnes de jointure a amélioré les performanc
 3. Si la table jointe est très grande OU Si le nombre de lignes filtrées OU Si le plan utilise une Nested Loop Join
 
 ## Exercice 6 : Synthèse et réflexion
+
 1. 
    - Il est plus efficace pour les recherches ponctuelles, sur un petit nombre de lignes.
    - Il est plus utile sur des colonnes à forte cardinalité (beaucoup de valeurs distinctes).
    - Il est très performant pour les recherches par égalité, et reste utile pour les intervalles si les données sont bien triées.
+
 
 2. 
    - Nested Loop : préféré quand l’une des tables est petite et qu’un index est disponible sur l’autre.
    - Hash Join : utilisé quand il n’y a pas d’ordre particulier, et efficace sur de grandes tables.
    - Merge Join : efficace si les deux tables sont triées sur la colonne de jointure.
 
+
 3. 
    - Il est activé quand le volume de données dépasse un certain seuil, estimé par PostgreSQL.
    - Les opérations qui en bénéficient le plus sont les scans, agrégations et jointures.
    - Il n’est pas toujours utilisé car le coût de coordination entre threads peut dépasser le gain sur des petites requêtes.
+
 
 4. 
    - Recherche exacte sur une colonne : index B-tree standard.
