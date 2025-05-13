@@ -1,7 +1,7 @@
 # TP #02 : Optimisation des requêtes avec les index
 
 # Exercice 1
-```
+```sql
 EXPLAIN ANALYZE SELECT * FROM title_basics WHERE start_year = 2020;
 ```
 ### 1.1 Résultat
@@ -29,7 +29,7 @@ EXPLAIN ANALYZE SELECT * FROM title_basics WHERE start_year = 2020;
 3. Rows removed by filter correspond aux lignes enlevés par le filtre de l'année
 
 ### 1.3
-```
+```sql
 CREATE INDEX idx_title_basics_start_year
 ON title_basics (start_year);
 ```
@@ -103,7 +103,7 @@ Le Bitmap Heap Scan, une fois qu'il a trouvé toutes les entrées recherchées d
 3. L'index n'est que sur une colonne, il ne prend donc pas en compte des filtres supplémentaires
 
 ### 2.3
-```
+```sql
 CREATE INDEX idx_title_basics_start_year_title_type
 ON title_basics (start_year, title_type);
 ```
