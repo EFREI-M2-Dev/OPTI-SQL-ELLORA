@@ -144,31 +144,6 @@ ON title_basics (start_year, title_type);
 4. Un covering index est donc particulièrement efficace si les requêtes font un SELECT sur ces colonnes précisement.
 
 
-
-
-
-## Exercice 4 : Agrégation et tri
-
-### 4.1 Requête complexe
-```sql
-SELECT tb.start_year AS year, COUNT(*) AS film_count, ROUND(AVG(tr.average_rating), 2) AS avg_rating FROM title_basics tb 
-JOIN title_ratings tr ON tb.tconst = tr.tconst
-WHERE tb.title_type = 'movie' AND tb.start_year BETWEEN 1990 AND 2000
-GROUP BY tb.start_year
-ORDER BY avg_rating DESC;
-```
-
-### 4.2 Analyse du plan complexe
-1.
-   - **Parallel Seq Scan** on _title_basics_ : PostgreSQL lit en parallèle les lignes de title_basics et applique un filtre sur start_year et title_type.**Index Scan** on _title_ratings_ : pour chaque ligne de title_basics, un accès est fait via l’index title_ratings_pkey pour trouver la note correspondante (tconst).
-   - **Nested Loop** : boucle imbriquée pour associer chaque film à sa note.
-   - **Sort by** _start_year_ : trie les lignes pour l’agrégation groupée.
-   - **Partial GroupAggregate** : chaque worker agrège les données de son lot (nombre de films, moyenne).
-   - **Gather Merge** : fusionne les résultats des workers.
-   - **Finalize GroupAggregate** : combine les résultats partiels pour obtenir les moyennes finales par année.
-   - **Sort final** : trie les années par note moyenne décroissante
-
-
 # Exercice 3: Jointures et filtres
 
 3.1) Requête avec EXPLAIN ANALYZE qui joint les tables title_basics et title_ratings pour trouver 
@@ -213,6 +188,27 @@ Après indexation
  4. Postgres peut abandonner le paralélisme si le volume données à traiter n'est pas conséquent et peut par conséquent plus coûteux.
 
 
+## Exercice 4 : Agrégation et tri
+
+### 4.1 Requête complexe
+```sql
+SELECT tb.start_year AS year, COUNT(*) AS film_count, ROUND(AVG(tr.average_rating), 2) AS avg_rating FROM title_basics tb 
+JOIN title_ratings tr ON tb.tconst = tr.tconst
+WHERE tb.title_type = 'movie' AND tb.start_year BETWEEN 1990 AND 2000
+GROUP BY tb.start_year
+ORDER BY avg_rating DESC;
+```
+
+### 4.2 Analyse du plan complexe
+1.
+   - **Parallel Seq Scan** on _title_basics_ : PostgreSQL lit en parallèle les lignes de title_basics et applique un filtre sur start_year et title_type.**Index Scan** on _title_ratings_ : pour chaque ligne de title_basics, un accès est fait via l’index title_ratings_pkey pour trouver la note correspondante (tconst).
+   - **Nested Loop** : boucle imbriquée pour associer chaque film à sa note.
+   - **Sort by** _start_year_ : trie les lignes pour l’agrégation groupée.
+   - **Partial GroupAggregate** : chaque worker agrège les données de son lot (nombre de films, moyenne).
+   - **Gather Merge** : fusionne les résultats des workers.
+   - **Finalize GroupAggregate** : combine les résultats partiels pour obtenir les moyennes finales par année.
+   - **Sort final** : trie les années par note moyenne décroissante
+
 2. L’agrégation est divisée en deux phases car PostgreSQL utilise le parallélisme (2 workers). Cela permet de répartir la charge de calcul :
       - **Partial GroupAggregate** : chaque worker calcule localement le nombre de films et la moyenne des notes pour les années qu’il traite.
       - **Finalize GroupAggregate** : le processus principal agrège les résultats partiels pour obtenir les résultats globaux.
@@ -220,6 +216,7 @@ Après indexation
 3. L'index permet une recherche rapide de la note associée à chaque film (tconst), au lieu de scanner toute la table title_ratings.
 
 4. Le tri final n'est pas "couteux". Le résultat porte sur 11 lignes.
+
 
 ### 4.3 Indexation des colonnes de jointure
 ```sql
@@ -235,7 +232,6 @@ On observe que l'indexation des colonnes de jointure a amélioré les performanc
 1. Oui : Cela signifie que PostgreSQL utilise cet index pour accéder rapidement à la note (average_rating) associée à chaque film (tconst) de title_basics. Cela remplace efficacement un Seq Scan sur title_ratings. En revanche, l’index sur title_basics(tconst) n’est pas utilisé, car title_basics est la table principale du FROM, et elle est toujours scannée en parallèle (via Parallel Seq Scan), pour filtrer sur start_year et title_type.
 2. La logique de la requête n’a pas changé ; PostgreSQL avait déjà choisi un plan performant, mais l’ajout de l’index a simplement permis d’améliorer localement la jointure ; Le volume de données reste le même, donc la structure du plan est conservée.
 3. Si la table jointe est très grande OU Si le nombre de lignes filtrées OU Si le plan utilise une Nested Loop Join
-
 
 
  # Exercice 5: Recherche ponctuelle
