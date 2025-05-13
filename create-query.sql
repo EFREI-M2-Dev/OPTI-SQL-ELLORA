@@ -21,8 +21,7 @@ CREATE TABLE title_akas
     types             TEXT[],      -- array of enumerated values
     attributes        TEXT[],      -- freeform additional descriptors
     is_original_title BOOLEAN,
-    PRIMARY KEY (title_id, ordering),
-    FOREIGN KEY (title_id) REFERENCES title_basics (tconst)
+    PRIMARY KEY (title_id, ordering)
 );
 
 CREATE TABLE title_episode
@@ -30,9 +29,7 @@ CREATE TABLE title_episode
     tconst         VARCHAR(12) PRIMARY KEY,
     parent_tconst  VARCHAR(12),
     season_number  INTEGER,
-    episode_number INTEGER,
-    FOREIGN KEY (tconst) REFERENCES title_basics (tconst),
-    FOREIGN KEY (parent_tconst) REFERENCES title_basics (tconst)
+    episode_number INTEGER
 );
 
 CREATE TABLE title_principals
@@ -43,16 +40,14 @@ CREATE TABLE title_principals
     category   VARCHAR(50),
     job        VARCHAR(100),
     characters TEXT,
-    PRIMARY KEY (tconst, ordering),
-    FOREIGN KEY (tconst) REFERENCES title_basics (tconst)
+    PRIMARY KEY (tconst, ordering)
 );
 
 CREATE TABLE title_ratings
 (
     tconst         VARCHAR(12) PRIMARY KEY,
     average_rating NUMERIC(3, 1),
-    num_votes      INTEGER,
-    FOREIGN KEY (tconst) REFERENCES title_basics (tconst)
+    num_votes      INTEGER
 );
 
 CREATE TABLE name_basics
@@ -64,3 +59,47 @@ CREATE TABLE name_basics
     primary_profession VARCHAR(255)[], -- top-3 professions
     known_for_titles   VARCHAR(12)[]   -- array of tconsts
 );
+
+CREATE TABLE title_crew (
+                            tconst VARCHAR(12) PRIMARY KEY,
+                            directors TEXT,  -- Chaîne CSV : ex. "nm0005690,nm0001234"
+                            writers   TEXT  -- Chaîne CSV : ex. "nm0001234"
+);
+
+
+ALTER TABLE title_akas
+    ALTER COLUMN types TYPE TEXT,
+    ALTER COLUMN attributes TYPE TEXT;
+
+ALTER TABLE name_basics
+    ALTER COLUMN primary_profession TYPE TEXT;
+
+ALTER TABLE name_basics
+    ALTER COLUMN known_for_titles TYPE TEXT;
+
+ALTER TABLE title_crew
+    ALTER COLUMN directors TYPE TEXT;
+
+ALTER TABLE title_crew
+    ALTER COLUMN writers TYPE TEXT;
+
+COPY name_basics FROM PROGRAM 'zcat /import/name.basics.tsv.gz | head -200'
+    WITH (FORMAT csv, DELIMITER E'\t', HEADER, NULL '\N', QUOTE E'\001');
+
+COPY title_basics FROM PROGRAM 'zcat /import/title.basics.tsv.gz | head -200'
+    WITH (FORMAT csv, DELIMITER E'\t', HEADER, NULL '\N', QUOTE E'\001');
+
+COPY title_akas FROM PROGRAM 'zcat /import/title.akas.tsv.gz | head -200'
+    WITH (FORMAT csv, DELIMITER E'\t', HEADER, NULL '\N', QUOTE E'\001');
+
+COPY title_crew FROM PROGRAM 'zcat /import/title.crew.tsv.gz | head -200'
+    WITH (FORMAT csv, DELIMITER E'\t', HEADER, NULL '\N', QUOTE E'\001');
+
+COPY title_episode FROM PROGRAM 'zcat /import/title.episode.tsv.gz | head -200'
+    WITH (FORMAT csv, DELIMITER E'\t', HEADER, NULL '\N', QUOTE E'\001');
+
+COPY title_principals FROM PROGRAM 'zcat /import/title.principals.tsv.gz | head -200'
+    WITH (FORMAT csv, DELIMITER E'\t', HEADER, NULL '\N', QUOTE E'\001');
+
+COPY title_ratings FROM PROGRAM 'zcat /import/title.ratings.tsv.gz | head -200'
+    WITH (FORMAT csv, DELIMITER E'\t', HEADER, NULL '\N', QUOTE E'\001');
