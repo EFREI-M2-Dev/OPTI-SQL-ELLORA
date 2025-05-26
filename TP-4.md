@@ -274,7 +274,7 @@ ORDER BY ef.average_rating DESC;
     WHERE nb.primary_name ILIKE 'Tom Hanks'
     ORDER BY tb.start_year;
 ```
-    Impossible de détailler l'analyse car la reqtte ne me renvoie rien comme resultat. Cela est dû au fait que je n'ai pas importer toute les données.
+    Impossible de détailler l'analyse car la reqête ne me renvoie rien comme resultat. Cela est dû au fait que je n'ai pas importer toutes les données de test.
 
 ### Exercice 3.2: Agrégations avancées
     Écrivez une requête qui utilise ROLLUP pour analyser les tendances des films:
@@ -283,7 +283,7 @@ ORDER BY ef.average_rating DESC;
     2. Calculez le nombre de films, la note moyenne et le nombre moyen de votes
     3. Incluez les sous-totaux par décennie et le total général
     4. Utilisez CASE pour formater lisiblement les résultats NULL du ROLLUP
-    
+
 ```sql
     SELECT 
         CASE 
