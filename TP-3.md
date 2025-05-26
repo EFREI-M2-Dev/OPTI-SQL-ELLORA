@@ -334,9 +334,9 @@ Tableau de comparaison des performances :
 ### 3.6 Analyse et réflexion
 
 1. **Comment l'ordre des colonnes dans l'index composite affecte-t-il son utilisation ?**
-- L’ordre des colonnes détermine dans quelles conditions l’index peut être utilisé efficacement.
-- PostgreSQL utilise l’index composite si les filtres ou tris correspondent **au début de l’index**, dans le même ordre.
-- Par exemple, un index `(genres, start_year)` est utile pour `WHERE genres = ...` ou `ORDER BY genres, start_year`, mais pas pour `WHERE start_year = ...`.
+   - L’ordre des colonnes détermine dans quelles conditions l’index peut être utilisé efficacement.
+   - PostgreSQL utilise l’index composite si les filtres ou tris correspondent **au début de l’index**, dans le même ordre.
+   - Par exemple, un index `(genres, start_year)` est utile pour `WHERE genres = ...` ou `ORDER BY genres, start_year`, mais pas pour `WHERE start_year = ...`.
 
 2. **Quand un index composite est-il préférable à plusieurs index séparés ?**
    - Lorsqu’une requête filtre ou trie **simultanément sur plusieurs colonnes**.
@@ -351,10 +351,78 @@ Tableau de comparaison des performances :
 ## Exercice 4: Index partiels
 
 ### 4.1 Identifier un sous-ensemble fréquent
+```sql
+SELECT start_year, COUNT(*) AS film_count
+FROM title_basics
+WHERE start_year IS NOT NULL
+GROUP BY start_year
+ORDER BY film_count DESC
+LIMIT 20;
+```
+
+Conclusion : La décennie 2015 à 2024 contient le plus de films, avec plus de 4 millions d’enregistrements. Elle est donc idéale pour la création d’un index partiel, car elle représente un sous-ensemble massif et ciblé.
+
 ### 4.2 Requête sur ce sous-ensemble
+
+```sql
+EXPLAIN ANALYZE SELECT * FROM title_basics
+WHERE start_year BETWEEN 2015 AND 2024;
+```
+
 ### 4.3 Création d'un index partiel
+```sql
+CREATE INDEX idx_title_basics_start_year_2015_2024
+ON title_basics(start_year)
+WHERE start_year BETWEEN 2015 AND 2024;
+```
+
 ### 4.4 Comparaison avec index complet
+```sql
+CREATE INDEX idx_title_basics_start_year_full ON title_basics(start_year);
+```
+
+1. Performances pour les requêtes dans la période ciblée (2015–2024)
+
+| Index utilisé                            | Type de scan    | Lignes retournées | Temps d'exécution |
+|-----------------------------------------|------------------|-------------------|-------------------|
+| Aucun (ni partiel ni complet utilisé)   | Seq Scan         | 4 521 187         | 1626.705 ms       |
+
+**Observation** : L’index partiel n’est pas utilisé car la requête retourne trop de lignes. PostgreSQL choisit un `Seq Scan` direct.
+
+2. Performances pour les requêtes hors de la période (1990–1999)
+
+| Index utilisé                        | Type de scan           | Lignes retournées | Temps d'exécution |
+|-------------------------------------|-------------------------|-------------------|-------------------|
+| `idx_title_basics_start_year_full`  | Parallel Bitmap Heap Scan | 752 036         | 636.283 ms        |
+
+**Observation** : L’index complet est bien utilisé pour des requêtes plus sélectives.
+
+3. Taille des deux index
+
+| Index                                  | Taille     |
+|----------------------------------------|------------|
+| `idx_title_basics_start_year_2015_2024`| 30 MB      |
+| `idx_title_basics_start_year_full`     | 77 MB      |
+
+**Observation** :
+   - L’index partiel est **près de 2,5 fois plus petit** que l’index complet.
+  - Il est donc plus économique en espace, mais limité aux requêtes très spécifiques à sa condition.
+
 ### 4.5 Analyse et réflexion
+
+1. **Quels sont les avantages et inconvénients d'un index partiel?**
+   - **Avantages** : plus léger, plus rapide sur un sous-ensemble ciblé, moins coûteux à maintenir.
+   - **Inconvénients** : utilisé uniquement si la requête correspond exactement à la condition `WHERE`.
+
+2. **Dans quels scénarios un index partiel est-il particulièrement utile?**
+   - Si les requêtes portent souvent sur un même filtre (ex : années récentes, status actif).
+   - Si ce sous-ensemble est bien plus petit que la table entière.
+
+3. **Comment déterminer si un index partiel est adapté à votre cas d'usage?**
+   - Analyser les requêtes fréquentes.
+   - Vérifier si le filtre est récurrent et sélectif.
+   - Tester avec `EXPLAIN ANALYZE` et comparer aux performances d’un index complet.
+
 
 ## Exercice 5: Index d'expressions
 
