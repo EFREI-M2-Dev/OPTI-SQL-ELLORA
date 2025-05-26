@@ -60,10 +60,11 @@ CREATE TABLE name_basics
     known_for_titles   VARCHAR(12)[]   -- array of tconsts
 );
 
-CREATE TABLE title_crew (
-                            tconst VARCHAR(12) PRIMARY KEY,
-                            directors TEXT,  -- Chaîne CSV : ex. "nm0005690,nm0001234"
-                            writers   TEXT  -- Chaîne CSV : ex. "nm0001234"
+CREATE TABLE title_crew
+(
+    tconst    VARCHAR(12) PRIMARY KEY,
+    directors TEXT, -- Chaîne CSV : ex. "nm0005690,nm0001234"
+    writers   TEXT  -- Chaîne CSV : ex. "nm0001234"
 );
 
 
