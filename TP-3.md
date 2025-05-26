@@ -425,10 +425,252 @@ CREATE INDEX idx_title_basics_start_year_full ON title_basics(start_year);
 
 
 ## Exercice 5: Index d'expressions
+    5.1 Recherche insensible à la casse
+    une requête qui recherche des titres indépendamment de la casse:
+```sql
+        SELECT *
+        FROM title_basics
+        WHERE lower(primary_title) LIKE lower('%star wars%');
+```
+
+    5.2 Mesure des performances sans index adapté
+    Analysez les performances avec l'index B-tree standard sur primary_Title
+```sql
+    EXPLAIN ANALYZE 
+    SELECT * 
+    FROM title_basics 
+    WHERE primary_title LIKE 'The%';
+```
+    "Gather  (cost=1000.00..246708.42 rows=1165 width=84) (actual time=10.372..1685.231 rows=7479 loops=1)"
+    "  Workers Planned: 2"
+    "  Workers Launched: 2"
+    "  ->  Parallel Seq Scan on title_basics  (cost=0.00..245591.92 rows=485 width=84) (actual time=15.314..1653.126 rows=2493 loops=3)"
+    "        Filter: (lower((primary_title)::text) ~~ '%star wars%'::text)"
+    "        Rows Removed by Filter: 3881449"
+    "Planning Time: 0.244 ms"
+    "JIT:"
+    "  Functions: 6"
+    "  Options: Inlining false, Optimization false, Expressions true, Deforming true"
+    "  Timing: Generation 1.696 ms (Deform 0.340 ms), Inlining 0.000 ms, Optimization 2.000 ms, Emission 37.546 ms, Total 41.242 ms"
+    "Execution Time: 1686.629 ms"
+
+    5.3 Création d'un index d'expression
+    Création d'un index sur l'expression LOWER(primary_Title).
+ ```sql
+    CREATE INDEX idx_lower_primary_title ON title_basics (LOWER(primary_title));
+```
+    5.4 Mise à jour de la requête et test
+    Modification de la requête pour utiliser LOWER() et mesure l'amélioration des performances
+ ``` sql
+    EXPLAIN ANALYZE
+    SELECT *
+    FROM title_basics
+    WHERE LOWER(primary_title) LIKE 'the%';
+ ``` 
+    "Gather  (cost=1000.00..252417.82 rows=58259 width=84) (actual time=11.243..1668.909 rows=602085 loops=1)"
+    "  Workers Planned: 2"
+    "  Workers Launched: 2"
+    "  ->  Parallel Seq Scan on title_basics  (cost=0.00..245591.92 rows=24275 width=84) (actual time=5.341..1619.159 rows=200695 loops=3)"
+    "        Filter: (lower((primary_title)::text) ~~ 'the%'::text)"
+    "        Rows Removed by Filter: 3683247"
+    "Planning Time: 1.655 ms"
+    "JIT:"
+    "  Functions: 6"
+    "  Options: Inlining false, Optimization false, Expressions true, Deforming true"
+    "  Timing: Generation 2.106 ms (Deform 0.399 ms), Inlining 0.000 ms, Optimization 2.059 ms, Emission 13.063 ms, Total 17.229 ms"
+    "Execution Time: 1686.338 ms"
+
+    Mesure de l'amélioration de performances:
+
+    - Aucun gain mesurable n’a été observé : La conversion pour utiliser LOWER(primary_title) n’a pas permis d’éviter le Parallel Seq Scan puisque le filtre retourne un très grand nombre de lignes.
+    - Dans ce contexte, même avec l’index d'expression, PostgreSQL estime qu’un scan séquentiel en parallèle reste optimal par rapport à l’utilisation de l’index.
+    - Le temps d’exécution global ne montre donc pas d’amélioration significative soit 1686.338 ms dans les deux cas.
+    
+    5.5 Autre exemple d'expression
+```sql
+CREATE INDEX idx_title_basics_title_length ON title_basics (LENGTH(primary_title));
+```
+```sql 
+    EXPLAIN ANALYZE
+    SELECT *
+    FROM title_basics
+    WHERE LENGTH(primary_title) > 10;
+```
+
+    "Seq Scan on title_basics  (cost=0.00..347545.41 rows=3883942 width=84) (actual time=8.680..1410.321 rows=10407496 loops=1)"
+    "  Filter: (length((primary_title)::text) > 10)"
+    "  Rows Removed by Filter: 1244331"
+    "Planning Time: 1.487 ms"
+    "JIT:"
+    "  Functions: 2"
+    "  Options: Inlining false, Optimization false, Expressions true, Deforming true"
+    "  Timing: Generation 2.190 ms (Deform 0.435 ms), Inlining 0.000 ms, Optimization 1.542 ms, Emission 7.076 ms, Total 10.808 ms"
+    "Execution Time: 1656.475 ms"
+
+    5.6 Analyse et réflexion
+      1. Correspondance exacte de l'expression :
+        L'optimiseur de requêtes ne peut exploiter l'index que si l'expression utilisée dans la clause WHERE est identique (même fonction, même syntaxe) à celle qui a été indexée. Toute divergence empêche l'utilisation de l'index, car la valeur calculée au moment de l'indexation doit correspondre exactement à celle calculée lors de l'exécution de la requête.
+
+      2. Impact sur les performances d'écriture :
+        Les index d'expressions augmentent la charge lors des opérations d'insertion ou de mise à jour. Chaque écriture doit recalculer l'expression indexée et mettre à jour l'index, ce qui peut ralentir les performances d'écriture, notamment dans les tables très actives.
+
+      3. Transformations couramment utilisées :
+        - Les fonctions de manipulation de texte, comme LOWER() ou UPPER(), pour appliquer une casse standard.
+        - Des fonctions de conversion ou de formatage, telles que CAST(), TRIM(), ou COALESCE().
+        - Des fonctions de calcul, par exemple LENGTH() pour obtenir la longueur d'une chaîne.  
 
 ## Exercice 6: Index couvrants (INCLUDE)
 
+    6.1 Requête fréquente avec projection
+```sql
+    SELECT primary_title, start_year
+    FROM title_basics
+    WHERE genres = 'Drama';
+```
+    6.2 Index standard
+```sql
+    CREATE INDEX idx_title_basics_genres ON title_basics(genres);
+```
+
+    Analyse du plan d'exécution :
+```sql
+    EXPLAIN ANALYZE
+    SELECT primary_title, start_year
+    FROM title_basics
+    WHERE genres = 'Drama';
+```
+    - L'index sur genres permet de filtrer sur cette colonne, mais la requête sélectionne également les colonnes primary_title et start_year qui ne font pas partie de l'index.
+    - Pour que PostgreSQL réalise un "Index Only Scan", toutes les colonnes requises par la requête doivent être disponibles dans l'index (ou être accessibles via le heap grâce à la visibilité complète).
+    - Dans ce cas précis, l'index idx_title_basics_genres ne contient que la colonne genres. PostgreSQL doit donc contacter la table pour récupérer primary_title et start_year, ce qui empêche un "Index Only Scan".
+
+    Pour obtenir un "Index Only Scan", il faudrait créer un index couvrant avec l'option INCLUDE (disponible à partir de PostgreSQL 11) :
+```sql
+    CREATE INDEX idx_title_basics_genres_covering 
+    ON title_basics(genres) 
+    INCLUDE (primary_title, start_year);
+```
+    6.3 Index couvrant
+    Créez un index couvrant qui inclut les colonnes supplémentaires nécessaires.
+```sql
+    CREATE INDEX idx_title_basics_genres_covering 
+    ON title_basics(genres) 
+    INCLUDE (primary_title, start_year);
+```
+```sql
+    EXPLAIN ANALYZE
+    SELECT primary_title, start_year
+    FROM title_basics
+    WHERE genres = 'Drama';
+```
+
+    6.4 Comparaison des performances
+    
+    1. Aucun index
+        PostgreSQL effectue un scan séquentiel complet sur la table, ce qui peut être lent si la table est volumineuse.
+    2. Index standard
+        Le filtre sur « genres » est optimisé grâce à l'index, mais l'extraction des colonnes « primary_title » et « start_year » nécessite un accès supplémentaire au heap. L'index n'est donc pas entièrement utilisé en mode « Index Only Scan ». Le gain de performance peut être modeste.
+    3. Index couvrant
+       Comme toutes les colonnes nécessaires sont incluses dans l'index, PostgreSQL peut réaliser un « Index Only Scan » si la visibilité de la table le permet (c'est-à-dire que le heap est synchronisé via la visibilité map). Cela peut réduire significativement le nombre d'accès disque et améliorer la performance de la requête.
+
+    6.5 Analyse et réflexion
+    1. Index Only Scan
+        C'est une méthode d'accès où PostgreSQL peut satisfaire une requête en se limitant uniquement aux pages de l'index, sans consulter les données réelles dans la table (heap). C'est avantageux car cela réduit le nombre d'accès disque, accélère l'exécution et diminue la charge sur le système, à condition que l'index couvre toutes les colonnes demandées et que la visibilité des lignes soit à jour.
+    2. Différence entre ajouter une colonne à l'index et l'inclure avec INCLUDE
+        - Ajouter une colonne à l'index signifie qu'elle fait partie de la clé d'indexation, ce qui influence l'ordre de tri et la manière dont l'index est utilisé pour rechercher des valeurs.
+        - Inclure une colonne avec INCLUDE place la colonne dans la partie "payload" de l'index. Elle n'affecte pas l'ordre de tri ni la recherche, mais est disponible pour les requêtes, permettant par exemple un « Index Only Scan » sans surcharger la clé d'index.
+    3. Quand privilégier un index couvrant par rapport à un index composite
+        - On privilégie un index couvrant lorsque l'objectif est de satisfaire complètement une requête sans accéder à la table. Cela est utile pour les requêtes en lecture fréquentes qui sélectionnent quelques colonnes supplémentaires (non utilisées pour filtrer ou trier) et ainsi améliorer les performances grâce à un « Index Only Scan ».
+        - Un index composite est plus adapté lorsqu'il faut optimiser les recherches sur plusieurs colonnes en tant que clés de filtrage ou de tri, même si certaines colonnes ne sont pas retournées dans la requête.  
+
 ## Exercice 7: Recherche textuelle
+    7.1 Requête de recherche simple
+        Requête simple qui recherche tous les titres contenant le mot "love" 
+```sql
+    SELECT *
+    FROM title_basics
+    WHERE primary_title ILIKE '%love%';
+```
+
+    7.2 Test de différentes approches
+        Mesurez les performances avec:
+    1. LIKE sans index
+```sql
+    EXPLAIN ANALYZE
+    SELECT *
+    FROM title_basics
+    WHERE primary_title LIKE '%love%';
+```
+    2. LIKE avec index B-tree
+```sql
+    -- Création de l'index B-tree sur primary_title
+    CREATE INDEX idx_title_basics_primary_title ON title_basics(primary_title);
+
+    -- Test avec le B-tree index
+    EXPLAIN ANALYZE
+    SELECT *
+    FROM title_basics
+    WHERE primary_title LIKE '%love%';
+```
+    3. Index trigram (GIN)
+```sql
+    -- Activation de l'extension pg_trgm 
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+    -- Création de l'index GIN trigram sur primary_title
+    CREATE INDEX idx_title_basics_trgm ON title_basics USING gin (primary_title gin_trgm_ops);
+
+    -- Test avec l'index trigram
+    EXPLAIN ANALYZE
+    SELECT *
+    FROM title_basics
+    WHERE primary_title ILIKE '%love%';
+```
+7.3 Recherche full-text
+    1. Ajoutez une colonne de type tsvector
+```sql
+    ALTER TABLE title_basics
+    ADD COLUMN primary_title_tsv tsvector;
+```
+    2. Remplissez cette colonne avec le résultat de to_tsvector. Ici, nous utilisons la configuration 'english' (vous pouvez adapter selon vos besoins) :
+```sql
+    UPDATE title_basics
+    SET primary_title_tsv = to_tsvector('english', primary_title);
+```
+    3. Créez un index GIN sur cette nouvelle colonne :
+```sql
+    CREATE INDEX idx_title_basics_primary_title_tsv
+    ON title_basics USING gin(primary_title_tsv);
+```
+    4. Réécrivez la requête à l'aide de to_tsquery pour effectuer la recherche full-text (ici, on recherche le terme "love") :
+```sql
+    CREATE INDEX idx_title_basics_primary_title_tsv
+    ON title_basics USING gin(primary_title_tsv);
+```
+
+    7.4 Analyse et réflexion
+    1. Quelles sont les différences entre LIKE, trigram et full-text search?
+        LIKE : Permet une recherche par correspondance de motifs simples avec des caractères génériques. Il est limité pour les recherches non préfixées (ex. %love%) et peut être inefficace sur de grands volumes de données.
+        Trigram (GIN avec pg_trgm) : Utilise des n-grammes pour découper les chaînes en séquences de caractères. Cela permet de rechercher des sous-chaînes de manière plus efficace, même avec des jokers en début de motif, et offre une tolérance aux fautes ou variations mineures.
+        Full-text search : Transforme le texte en « tokens » en appliquant une configuration linguistique (stop words, racinisation, etc.) afin de permettre une recherche sémantique et contextuelle, avec la possibilité de classer les résultats par pertinence.
+
+    2. Quels compromis faites-vous en termes de précision, performance et espace?
+        LIKE :
+            - Précision : Recherche exacte de correspondance de motifs, mais limitée dans sa capacité à gérer des variations ou fautes.
+            - Performance : Peut être très lent sur de grands volumes si aucun index adapté n'est utilisé.
+            - Espace : N'ajoute pratiquement aucun coût en termes d'index (sauf s'il est indexé par un B-tree, qui dans le cas des jokers en début d'expression n'est pas efficace).
+        Trigram :
+            - Précision : Permet des recherches approximatives et tolérantes aux erreurs, mais peut parfois retourner des résultats moins précis si le seuil de similarité est bas.
+            - Performance : Améliore considérablement la recherche par sous-chaînes sur de grands ensembles grâce à l'indexation GIN.
+            - Espace : Les index trigram peuvent occuper plus d'espace disque en raison du stockage des n-grammes.
+        Full-text search :
+            - Précision : Offre une compréhension plus « linguistique » et sémantique du texte ce qui est adapté aux recherches de documents, même si cela peut parfois manquer de précision pour des correspondances exactes.
+            - Performance : Très performant pour les grands volumes de texte, surtout lorsqu'on utilise des index GIN adaptés, et permet un classement par pertinence.
+            - Espace : Les colonnes tsvector et leurs index peuvent être volumineux et nécessiter un temps de maintenance supplémentaire.
+
+    3. Pour quels volumes de données et types de recherches chaque approche est-elle adaptée?
+        - LIKE est adapté aux petits ensembles de données ou lorsque le motif recherché est très sélectif.
+        - Trigram est particulièrement utile pour des recherches sur de grandes tables lorsque la recherche porte sur une sous-chaîne, avec tolérance aux erreurs et des motifs non préfixés, typiques des applications de recherche « fuzzy ».
+        - Full-text search convient aux volumes massifs de texte et aux applications nécessitant une analyse linguistique (par exemple, moteurs de recherche sur des articles de blog, documents, etc.) où la pertinence et le classement des résultats sont importants.
 
 ## Exercice 8: Indexation de données JSON/JSONB
 
