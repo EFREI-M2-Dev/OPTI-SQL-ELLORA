@@ -250,16 +250,196 @@ ORDER BY ef.average_rating DESC;
 ## Partie 3: Window Functions et agrégations avancées
 
 ### Exercice 3.1: Analyse de carrière avec Window Functions
+    Pour un acteur donné (ex: "Tom Hanks"), analysez l'évolution de sa carrière:
+    1. Listez ses films par ordre chronologique
+    2. Pour chaque film, calculez sa note et incluez:
+        ○ Son classement parmi tous ses films (RANK)
+        ○ La note moyenne mobile sur ses 3 derniers films (AVG OVER)
+        ○ L'écart avec la note de son film précédent (LAG)
+```sql
+    SELECT 
+        tb.primary_title,
+        tb.start_year,
+        tr.average_rating,
+        RANK() OVER (ORDER BY tb.start_year) AS film_rank,
+        ROUND(AVG(tr.average_rating) OVER (
+            ORDER BY tb.start_year 
+            ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+        ),2) AS moving_avg,
+        tr.average_rating - LAG(tr.average_rating) OVER (ORDER BY tb.start_year) AS rating_diff
+    FROM title_basics tb
+    JOIN title_ratings tr ON tb.tconst = tr.tconst
+    JOIN title_principals tp ON tb.tconst = tp.tconst
+    JOIN name_basics nb ON tp.nconst = nb.nconst
+    WHERE nb.primary_name ILIKE 'Tom Hanks'
+    ORDER BY tb.start_year;
+```
+    Impossible de détailler l'analyse car la reqtte ne me renvoie rien comme resultat. Cela est dû au fait que je n'ai pas importer toute les données.
 
 ### Exercice 3.2: Agrégations avancées
+    Écrivez une requête qui utilise ROLLUP pour analyser les tendances des films:
 
+    1. Regroupez les films par décennie et par genre
+    2. Calculez le nombre de films, la note moyenne et le nombre moyen de votes
+    3. Incluez les sous-totaux par décennie et le total général
+    4. Utilisez CASE pour formater lisiblement les résultats NULL du ROLLUP
+    
+```sql
+    SELECT 
+        CASE 
+            WHEN GROUPING((tb.start_year / 10) * 10) = 1 THEN 'Total'
+            ELSE 'Decade ' || (((tb.start_year / 10) * 10)::text)
+        END AS decade,
+        CASE 
+            WHEN GROUPING(tb.genres) = 1 THEN 'All Genres'
+            ELSE tb.genres
+        END AS genre,
+        COUNT(*) AS film_count,
+        ROUND(AVG(tr.average_rating), 2) AS avg_rating,
+        ROUND(AVG(tr.num_votes)::numeric, 0) AS avg_votes
+    FROM title_basics tb
+    JOIN title_ratings tr ON tb.tconst = tr.tconst
+    WHERE tb.start_year IS NOT NULL
+    GROUP BY ROLLUP(((tb.start_year / 10) * 10), tb.genres)
+    ORDER BY decade, genre;
+```
 ---
 
 ## Partie 4: Pagination et matérialisation
 
 ### Exercice 4.1: Pagination optimisée
+    Comparez deux approches pour paginer les résultats d'une recherche de films:
+    1. Méthode classique avec OFFSET:
+        Cette méthode consiste à sauter un certain nombre de résultats avant de renvoyer la page souhaitée. Par exemple, pour récupérer la page 100 (10 résultats par page) :
+```sql
+    EXPLAIN ANALYSE 
+    SELECT primary_title, start_year, genres
+    FROM title_basics
+    ORDER BY start_year DESC
+    LIMIT 10 OFFSET 990;
+```
+    "Limit  (cost=488622.04..488623.20 rows=10 width=36) (actual time=1758.743..1767.003 rows=10 loops=1)"
+    "  ->  Gather Merge  (cost=488506.53..1621491.30 rows=9710620 width=36) (actual time=1741.321..1749.705 rows=1000 loops=1)"
+    "        Workers Planned: 2"
+    "        Workers Launched: 2"
+    "        ->  Sort  (cost=487506.51..499644.78 rows=4855310 width=36) (actual time=1731.263..1731.318 rows=1000 loops=3)"
+    "              Sort Key: start_year DESC"
+    "              Sort Method: top-N heapsort  Memory: 204kB"
+    "              Worker 0:  Sort Method: top-N heapsort  Memory: 185kB"
+    "              Worker 1:  Sort Method: top-N heapsort  Memory: 194kB"
+    "              ->  Parallel Seq Scan on title_basics  (cost=0.00..221295.10 rows=4855310 width=36) (actual time=2.142..1344.467 rows=3883942 loops=3)"
+    "Planning Time: 3.847 ms"
+    "JIT:"
+    "  Functions: 8"
+    "  Options: Inlining false, Optimization false, Expressions true, Deforming true"
+    "  Timing: Generation 0.422 ms (Deform 0.288 ms), Inlining 0.000 ms, Optimization 3.022 ms, Emission 19.618 ms, Total 23.062 ms"
+    "Execution Time: 1903.753 ms"
+
+    Avantages :
+        - Très simple à mettre en place.
+        - Permet de sauter arbitrairement à n'importe quelle page.
+    Inconvénients :
+        - Si l'OFFSET est élevé, PostgreSQL doit parcourir et ignorer de nombreuses lignes, ce qui dégrade les performances.
+        - Pour de gros volumes, les performances se dégradent de façon significative.
+
+    2. Méthode par curseur (keyset pagination)
+        La pagination par curseur (ou keyset) utilise une condition pour récupérer directement les résultats suivants. Par exemple, en supposant que le dernier film affiché avait start_year = 2015 et primary_title = 'Z...', on peut écrire :
+```sql
+    EXPLAIN ANALYSE
+    SELECT primary_title, start_year, genres
+    FROM title_basics
+    WHERE start_year < 2015 OR (start_year = 2015 AND primary_title > 'Z...')
+    ORDER BY start_year DESC, primary_title
+    LIMIT 10;
+```
+    "Limit  (cost=309202.98..309204.15 rows=10 width=36) (actual time=847.585..849.688 rows=10 loops=1)"
+    "  ->  Gather Merge  (cost=309202.98..854447.25 rows=4673196 width=36) (actual time=840.636..842.736 rows=10 loops=1)"
+    "        Workers Planned: 2"
+    "        Workers Launched: 2"
+    "        ->  Sort  (cost=308202.96..314044.46 rows=2336598 width=36) (actual time=826.789..826.791 rows=8 loops=3)"
+    "              Sort Key: start_year DESC, primary_title"
+    "              Sort Method: top-N heapsort  Memory: 26kB"
+    "              Worker 0:  Sort Method: top-N heapsort  Memory: 26kB"
+    "              Worker 1:  Sort Method: top-N heapsort  Memory: 26kB"
+    "              ->  Parallel Seq Scan on title_basics  (cost=0.00..257709.92 rows=2336598 width=36) (actual time=3.374..626.097 rows=1858784 loops=3)"
+    "                    Filter: ((start_year < 2015) OR ((start_year = 2015) AND ((primary_title)::text > 'Z...'::text)))"
+    "                    Rows Removed by Filter: 2025158"
+    "Planning Time: 3.731 ms"
+    "JIT:"
+    "  Functions: 13"
+    "  Options: Inlining false, Optimization false, Expressions true, Deforming true"
+    "  Timing: Generation 1.315 ms (Deform 0.618 ms), Inlining 0.000 ms, Optimization 1.169 ms, Emission 15.761 ms, Total 18.245 ms"
+    "Execution Time: 850.305 ms"
+
+    Avantages :
+        - Excellente performance car PostgreSQL utilise un index (sur start_year et éventuellement primary_title) pour localiser directement le point de départ.
+        - Le nombre de lignes à parcourir est basé sur les conditions de recherche et non sur un OFFSET arbitraire.
+    Inconvénients :
+        - Nécessite de connaître les valeurs du dernier enregistrement de la page précédente (le curseur).
+        - La navigation aléatoire dans les pages (sauter directement à une page donnée) est moins évidente.
+
+    Conclusion
+    Méthode OFFSET :
+        Adaptée pour des applications simples ou lorsque le nombre de lignes est modéré. Cependant, pour des ensembles de données volumineux, la méthode OFFSET peut s'avérer très coûteuse en termes de performances.
+    Méthode keyset (curseur) :
+        Idéale pour des applications manipulant de grandes quantités de données, car elle réduit le coût de parcours en ne recherchant que les enregistrements à partir du curseur. Cette approche est plus scalable pour des itérations de page en page.
+
 
 ### Exercice 4.2: Vues matérialisées
+    Créez une vue matérialisée film_statistics qui stocke des statistiques précalculées:
+
+    1. Définissez le schéma de la vue (films, notes, genres, statistiques)
+        - genres : le genre de film
+        - film_count : le nombre total de films dans ce genre
+        - avg_rating : la note moyenne calculée à partir de title_ratings
+        - min_rating : la note minimale
+        - max_rating : la note maximale
+        - total_votes : la somme des votes
+    
+    2. Créer la vue et des index appropriés
+```sql
+    CREATE MATERIALIZED VIEW film_statistics AS
+    SELECT
+        tb.genres,
+        COUNT(*) AS film_count,
+        AVG(tr.average_rating) AS avg_rating,
+        MIN(tr.average_rating) AS min_rating,
+        MAX(tr.average_rating) AS max_rating,
+        SUM(tr.num_votes) AS total_votes
+    FROM title_basics tb
+    JOIN title_ratings tr ON tb.tconst = tr.tconst
+    WHERE tb.genres IS NOT NULL
+    GROUP BY tb.genres;
+```
+    Ajoutons un index afin d'optiser les requête analytiques:
+```sql
+    CREATE INDEX idx_film_statistics_genres ON film_statistics(genres);
+```
+
+    3. Écrire une requête analytique utilisant cette vue:
+        Afficher les 5 genres avec la note moyenne la plus élevée :
+```sql
+    EXPLAIN ANALYZE
+    SELECT *
+    FROM film_statistics
+    ORDER BY avg_rating DESC
+    LIMIT 5;
+```
+    4. Créer une fonction de rafraîchissement
+        Puisque les données sous-jacentes peuvent évoluer, il est utile de mettre à jour la vue matérialisée. La fonction suivante se charge de rafraîchir la vue :
+```sql
+    CREATE OR REPLACE FUNCTION refresh_film_statistics()
+    RETURNS void AS $$
+    BEGIN
+    REFRESH MATERIALIZED VIEW film_statistics;
+    END;
+    $$ LANGUAGE plpgsql;
+```
+
+    Appel de la fonction :
+```sql
+    SELECT refresh_film_statistics();
+```
 
 ---
 
