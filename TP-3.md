@@ -190,7 +190,217 @@ SELECT * FROM title_basics WHERE genres = 'Drama' AND start_year = 1994;
 ## Exercice 7: Recherche textuelle
 
 ## Exercice 8: Indexation de données JSON/JSONB
+### 8.1
+```
+INSERT INTO movies (tconst, data)
+SELECT tconst, to_jsonb(tb) FROM title_basics tb
+WHERe title_type = 'movie'
+```
+
+### 8.2
+1.
+```
+SELECT *
+FROM movies
+WHERE data->>'genres' = 'Romance'
+```
+
+
+2.
+```
+
+```
+3.
+```
+SELECT *
+FROM movies
+WHERE data ? 'genres'
+```
+
+### 8.3
+
+1.
+```
+CREATE INDEX idx_movies_gin
+ON movies
+USING GIN (data)
+```
+2.
+```
+CREATE INDEX idx_movies_pathops
+ON movies
+USING GIN (data jsonb_path_ops)
+```
+3.
+```
+CREATE INDEX idx_movies_genres_btree
+ON movies ((data->>'genres'))
+```
+### 8.4
+1.
+Les opérations types '?' '?|' '@>' '?&' et '@?' bénéficient le plus le plus des index GIN sur JSONB
+
+2.
+Il faut utiliser jsonb_path_ops plutôt que l'index GIN standard quand on veut un index plus performant, et que l'on effectue essentiellement des'?' '?|'
+
+3.
+Pour indexer efficacement une propriété spécifique dans une structure JSONB complexe, le meilleur choix est souvent un index B-tree sur l'extraction de cette propriété, plutôt qu’un index GIN global sur tout le champ JSONB.
 
 ## Exercice 9: Analyse et maintenance des index
+### 9.1
+
+1.
+```
+SELECT
+    i.relname AS index_name,
+    t.relname AS table_name,
+    idx_scan,
+    pg_size_pretty(pg_relation_size(i.oid)) AS index_size
+FROM pg_stat_user_indexes s
+JOIN pg_index pi ON pi.indexrelid = s.indexrelid
+JOIN pg_class i ON i.oid = s.indexrelid
+JOIN pg_class t ON t.oid = s.relid
+WHERE idx_scan > 0
+ORDER BY idx_scan DESC
+```
+2.
+
+```
+SELECT
+    i.relname AS index_name,
+    t.relname AS table_name,
+    idx_scan,
+    pg_size_pretty(pg_relation_size(i.oid)) AS index_size
+FROM pg_stat_user_indexes s
+JOIN pg_index pi ON pi.indexrelid = s.indexrelid
+JOIN pg_class i ON i.oid = s.indexrelid
+JOIN pg_class t ON t.oid = s.relid
+WHERE idx_scan = 0
+ORDER BY pg_relation_size(i.oid) DESC
+```
+3.
+
+```
+SELECT
+    i.relname AS index_name,
+    t.relname AS table_name,
+    pg_size_pretty(pg_relation_size(i.oid)) AS index_size,
+    idx_scan
+FROM pg_stat_user_indexes s
+JOIN pg_class i ON i.oid = s.indexrelid
+JOIN pg_class t ON t.oid = s.relid
+ORDER BY pg_relation_size(i.oid) DESC
+```
+
+### 9.2
+1.
+```
+SELECT pg_size_pretty(pg_relation_size('idx_movies_gin')) AS index_size_before
+```
+
+2.
+
+```
+UPDATE movies
+SET data = jsonb_set(data, '{year}', to_jsonb((2010 + floor(random()*10)::int)::text))
+WHERE ctid IN (
+SELECT ctid FROM movies ORDER BY random() LIMIT 10000)
+```
+
+2.
+La taille est resté la même après de multiples mises à jour (113MB avant et après)
+
+### 9.3
+
+1.
+INFO:  vacuuming "imdb_clone.public.title_basics"
+INFO:  launched 1 parallel vacuum worker for index cleanup (planned: 1)
+INFO:  table "title_basics": truncated 172512 to 172497 pages
+INFO:  finished vacuuming "imdb_clone.public.title_basics": index scans: 0
+pages: 15 removed, 172497 remain, 15 scanned (0.01% of total)
+tuples: 0 removed, 11650016 remain, 0 are dead but not yet removable
+removable cutoff: 771, which was 1 XIDs old when operation ended
+
+2.
+```
+REINDEX INDEX idx_movies_genres_btree
+```
+
+3.
+```
+ANALYZE VERBOSE title_basics
+```
+INFO:  analyzing "public.title_basics"
+INFO:  "title_basics": scanned 30000 of 172497 pages, containing 2026713 live rows and 0 dead rows; 30000 rows in sample, 11653397 estimated total rows
+ANALYZE
+
+### 9.4
+Une requête du type : SELECT * FROM movies WHERE data ? 'genres' ne semble pas avoir été éxecuté plus rapidement, avec un temps de 5 sec de délai.
+
+### 9.5
+
+1. On peut déterminer si un index est utile si il est actuellement utilisé pour des requêtes qui sont régulières, et réduit donc drastiquement le temps d'éxecution de celles-ci.
+Au contraire un index qui est très peu utilisé et si il est en chevauchage avec un autre index.
+
+2. Une maintenance peut être nécessaire si sa taille augmente drastiquement, et si il est lié à une table soumit à de fréquentes modifications.
+
+3. On peut planifier un REINDEX hebdomadaire ou mensuel, vérifier l'utilité des index avec des EXPLAIN ( ANALYZE, BUFFERS )
 
 ## Exercice 10: Synthèse et cas pratiques
+### 10.1
+1.
+```
+CREATE INDEX idx_movies_title_gin ON movies USING GIN (to_tsvector('simple', title))
+```
+
+2.
+```
+CREATE INDEX idx_user_preferences_user_id ON user_preferences (user_id)
+```
+
+3.
+```
+CREATE INDEX idx_watch_history_user_movie ON watch_history (user_id, movie_id)
+```
+
+4.
+```
+CREATE INDEX idx_movie_views_count ON movie_views (view_count DESC)
+```
+
+### 10.2
+En supposant des tables tel que hotels, rooms, rooms_availability, reservations, clients
+
+1.
+```
+CREATE INDEX idx_hotels_city ON hotels(city);
+CREATE INDEX idx_availability_date_room ON room_availability(date, room_id) WHERE is_available = true
+```
+
+2.
+```
+CREATE INDEX idx_reservations_user_date ON reservations(user_id, checkin_date DESC)
+```
+
+3.
+```
+CREATE INDEX idx_reservations_checkin_checkout ON reservations(checkin_date, checkout_date)
+```
+4.
+
+```
+pricing(id, room_id, date, price)
+```
+
+### 10.3
+1.
+Les indexations permettent d'équilibrer les performances de lectures et d'écriture
+
+2.
+Il faut prioriser la création d'index utilisant les colonnes filtrées avec les requêtes les plus fréquentes
+
+3.
+On peut évaluer l'éfficacité de nos indéxations en comparant le temps d'éxecution des requêtes avec et sans et la fréquence d'utilisation de l'index.
+
+4.
+On peut analyser périodiquement les reqûetes, et vérifier leurs vitesses sur le temps, et mettre à jour les statistiques fréquemment avec ANALYZE.
