@@ -447,4 +447,119 @@ ORDER BY ef.average_rating DESC;
 
 ### Exercice 5.1: Configuration du parallélisme
 
+1.
+SHOW max_parallel_workers_per_gather; => 2
+
+2.
+Pour une analyse de ce type:
+```
+EXPLAIN ANALYZE SELECT start_year, COUNT(*)
+FROM title_basics WHERE title_type = 'movie'
+GROUP BY start_year ORDER BY start_year
+```
+Sans Parallélisme
+
+```
+"Sort  (cost=321621.89..321622.22 rows=134 width=12) (actual time=7667.632..7667.641 rows=140 loops=1)"
+"  Sort Key: start_year"
+"  Sort Method: quicksort  Memory: 29kB"
+"  ->  HashAggregate  (cost=321615.81..321617.15 rows=134 width=12) (actual time=7666.235..7666.262 rows=140 loops=1)"
+"        Group Key: start_year"
+"        Batches: 1  Memory Usage: 48kB"
+"        ->  Seq Scan on title_basics  (cost=0.00..318164.46 rows=690270 width=4) (actual time=82.099..7454.207 rows=714452 loops=1)"
+"              Filter: ((title_type)::text = 'movie'::text)"
+"              Rows Removed by Filter: 10935564"
+"Planning Time: 16.945 ms"
+"JIT:"
+"  Functions: 7"
+"  Options: Inlining false, Optimization false, Expressions true, Deforming true"
+"  Timing: Generation 4.459 ms (Deform 1.807 ms), Inlining 0.000 ms, Optimization 7.103 ms, Emission 74.058 ms, Total 85.620 ms"
+"Execution Time: 8963.850 ms"
+```
+Avec parallélisme (4)
+
+```
+"Finalize GroupAggregate  (cost=210782.84..210851.04 rows=134 width=12) (actual time=3220.854..3259.223 rows=140 loops=1)"
+"  Group Key: start_year"
+"  ->  Gather Merge  (cost=210782.84..210847.02 rows=536 width=12) (actual time=3220.829..3259.070 rows=653 loops=1)"
+"        Workers Planned: 4"
+"        Workers Launched: 4"
+"        ->  Sort  (cost=209782.78..209783.11 rows=134 width=12) (actual time=3090.356..3090.368 rows=131 loops=5)"
+"              Sort Key: start_year"
+"              Sort Method: quicksort  Memory: 29kB"
+"              Worker 0:  Sort Method: quicksort  Memory: 29kB"
+"              Worker 1:  Sort Method: quicksort  Memory: 29kB"
+"              Worker 2:  Sort Method: quicksort  Memory: 29kB"
+"              Worker 3:  Sort Method: quicksort  Memory: 28kB"
+"              ->  Partial HashAggregate  (cost=209776.71..209778.05 rows=134 width=12) (actual time=3090.170..3090.207 rows=131 loops=5)"
+"                    Group Key: start_year"
+"                    Batches: 1  Memory Usage: 48kB"
+"                    Worker 0:  Batches: 1  Memory Usage: 48kB"
+"                    Worker 1:  Batches: 1  Memory Usage: 48kB"
+"                    Worker 2:  Batches: 1  Memory Usage: 48kB"
+"                    Worker 3:  Batches: 1  Memory Usage: 48kB"
+"                    ->  Parallel Seq Scan on title_basics  (cost=0.00..208913.87 rows=172568 width=4) (actual time=19.983..3009.496 rows=142890 loops=5)"
+"                          Filter: ((title_type)::text = 'movie'::text)"
+"                          Rows Removed by Filter: 2187113"
+"Planning Time: 4.171 ms"
+"JIT:"
+"  Functions: 38"
+"  Options: Inlining false, Optimization false, Expressions true, Deforming true"
+"  Timing: Generation 11.356 ms (Deform 2.659 ms), Inlining 0.000 ms, Optimization 4.276 ms, Emission 90.981 ms, Total 106.614 ms"
+"Execution Time: 3264.647 ms"
+```
+
+Le temps d'éxecution est presque trois fois plus rapide, et la méthode d'analyse diffère
+
 ### Exercice 5.2: Analyse globale de performances
+En supposant que l'on veuille chercher des films ou séries par leurs titres, genres, et périodes
+
+1.
+```
+EXPLAIN ANALYZE
+SELECT * FROM title_basics
+WHERE primary_title ILIKE '%war%'
+  AND genres LIKE 'Action'
+  AND title_type = 'movie'
+  AND start_year BETWEEN 2000 AND 2020
+LIMIT 50;
+```
+On mesure les performances des requêtes qui seront utilisés pour ce cas d'utilisation, si un utilisateur tape en mot clé "war" et en genres "Actions" et cherche des films.
+
+```
+"Limit  (cost=1000.00..282716.00 rows=1 width=84) (actual time=24.010..8363.507 rows=50 loops=1)"
+"  ->  Gather  (cost=1000.00..282716.00 rows=1 width=84) (actual time=16.951..8356.388 rows=50 loops=1)"
+"        Workers Planned: 2"
+"        Workers Launched: 2"
+"        ->  Parallel Seq Scan on title_basics  (cost=0.00..281715.90 rows=1 width=84) (actual time=130.332..8280.959 rows=20 loops=3)"
+"              Filter: (((primary_title)::text ~~* '%war%'::text) AND ((genres)::text ~~ 'Action'::text) AND (start_year >= 2000) AND (start_year <= 2020) AND ((title_type)::text = 'movie'::text))"
+"              Rows Removed by Filter: 3883318"
+"Planning Time: 0.486 ms"
+"JIT:"
+"  Functions: 7"
+"  Options: Inlining false, Optimization false, Expressions true, Deforming true"
+"  Timing: Generation 3.375 ms (Deform 0.947 ms), Inlining 0.000 ms, Optimization 1.622 ms, Emission 23.312 ms, Total 28.309 ms"
+"Execution Time: 8365.314 ms"
+```
+
+2.
+On peut ensuite créer des indexs sur les colonnes concernées
+
+```
+CREATE INDEX idx_genres_year ON title_basics(genres, start_year, title_type);
+
+```
+3.
+"Limit  (cost=401.24..5099.31 rows=1 width=84) (actual time=12.787..26.199 rows=50 loops=1)"
+"  ->  Bitmap Heap Scan on title_basics  (cost=401.24..5099.31 rows=1 width=84) (actual time=12.785..26.183 rows=50 loops=1)"
+"        Recheck Cond: ((start_year >= 2000) AND (start_year <= 2020) AND ((title_type)::text = 'movie'::text))"
+"        Filter: (((primary_title)::text ~~* '%war%'::text) AND ((genres)::text ~~ 'Action'::text))"
+"        Rows Removed by Filter: 3742"
+"        Heap Blocks: exact=3327"
+"        ->  Bitmap Index Scan on idx_genres_year  (cost=0.00..401.24 rows=1251 width=0) (actual time=12.240..12.241 rows=4417 loops=1)"
+"              Index Cond: (((genres)::text = 'Action'::text) AND (start_year >= 2000) AND (start_year <= 2020) AND ((title_type)::text = 'movie'::text))"
+"Planning Time: 4.210 ms"
+"Execution Time: 26.243 ms"
+
+L'éxecution est instantannée après l'indexation, et la methode est passé au Bimap Heat Scan
+4.
